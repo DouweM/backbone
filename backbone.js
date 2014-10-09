@@ -444,7 +444,7 @@
     // If the server returns an attributes hash that differs, the model's
     // state will be `set` again.
     save: function(key, val, options) {
-      var attrs, method, xhr, attributes = this.attributes;
+      var attrs, method, xhr, done;
 
       // Handle both `"key", value` and `{key: value}` -style arguments.
       if (key == null || typeof key === 'object') {
@@ -456,19 +456,20 @@
 
       options = _.extend({validate: true}, options);
 
-      // If we're not waiting and attributes exist, save acts as
-      // `set(attr).save(null, opts)` with validation. Otherwise, check if
-      // the model will be valid when the attributes, if any, are set.
-      if (attrs && !options.wait) {
-        if (!this.set(attrs, options)) return false;
-      } else {
-        if (!this._validate(attrs, options)) return false;
+      if (options.wait) {
+        current = _.clone(this.attributes);
+        // Set attrs that weren't in the original values to undefined, so 
+        // they're reset properly.
+        if (attrs) {
+          for (var key in attrs) {
+            if (!_.has(current, key)) current[key] = void 0;
+          }
+        }
       }
 
-      // Set temporary attributes if `{wait: true}`.
-      if (attrs && options.wait) {
-        this.attributes = _.extend({}, attributes, attrs);
-      }
+      // Regular saves `set` attributes before persisting to the server.
+      var silentOptions = _.extend({}, options, {silent: true});
+      if (attrs && !this.set(attrs, options.wait ? silentOptions : options)) return false;
 
       // After a successful server-side save, the client is (optionally)
       // updated with the server-side state.
@@ -476,8 +477,7 @@
       var model = this;
       var success = options.success;
       options.success = function(resp) {
-        // Ensure attributes are restored during synchronous saves.
-        model.attributes = attributes;
+        done = true;
         var serverAttrs = model.parse(resp, options);
         if (options.wait) serverAttrs = _.extend(attrs || {}, serverAttrs);
         if (_.isObject(serverAttrs) && !model.set(serverAttrs, options)) {
@@ -492,8 +492,9 @@
       if (method === 'patch') options.attrs = attrs;
       xhr = this.sync(method, this, options);
 
-      // Restore attributes.
-      if (attrs && options.wait) this.attributes = attributes;
+      // When using `wait`, reset attributes to original values unless
+      // `success` has been called already.
+      if (!done && options.wait) this.set(current, silentOptions);
 
       return xhr;
     },
